@@ -1,0 +1,48 @@
+# Local Codex instructions, conversation state, and installed repository skills.
+/.agents/
+/.codex/
+/AGENTS.md
+/CONVERSATION_CONTEXT.md
+/docs/skill-reuse.md
+
+# Private photographs, references, and generated run data.
+/input/
+/reference/
+/output/
+/cache/
+/reports/
+*.ai.json
+
+# Local credentials and environment configuration. Keep the safe template.
+/.env
+/.env.*
+!/.env.example
+
+# Local model weights and large inference artifacts.
+*.gguf
+*.safetensors
+*.onnx
+
+# Python environments, caches, test output, and build artifacts.
+/.venv/
+/venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+/htmlcov/
+/dist/
+/build/
+*.egg-info/
+*.py[cod]
+
+# Editor state, operating-system metadata, and temporary files.
+.DS_Store
+._*
+.idea/
+.vscode/
+.fleet/
+*.swp
+*.swo
+*~

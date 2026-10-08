@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "local-gallery-editor"
+version = "0.1.0"
+description = "Local-first, non-destructive gallery editing and review"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pillow>=11,<13", "numpy>=2,<3", "pydantic>=2.10,<3", "httpx>=0.28,<1", "opencv-python-headless>=4.10,<5"]
+
+[project.optional-dependencies]
+raw = ["rawpy>=0.24,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "playwright>=1.50,<2"]
+
+[project.scripts]
+gallery-editor = "gallery_editor.cli:main"
+ai-automatic-gallery-editor = "gallery_editor.cli:edit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gallery_editor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

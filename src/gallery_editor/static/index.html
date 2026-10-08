@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stillroom · Local Gallery Editor</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><div><span class="eyebrow">LOCAL PHOTO WORKSPACE</span><h1>Stillroom<span> / Gallery editor</span></h1></div><span id="mode" class="badge">Local only</span></header>
+<main>
+<section class="toolbar"><div><h2>Your gallery</h2><p id="inventory">Place photographs in input/ to begin.</p></div>
+<div class="actions"><button id="scan">Scan input/</button><button id="style">Analyze album style</button><button id="process" class="primary">Process gallery</button></div></section>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="progressPanel" hidden aria-label="Pipeline stages"><h3 id="phase">Analyzing library</h3><progress id="stageProgress" max="1" value="0"></progress><ol id="stages"></ol></section>
+<details id="album"><summary>Album style <span>Review or adjust before processing</span></summary>
+<p id="styleSource">Deep analysis covers every photograph before editing. Cluster-specific rules preserve differences in lighting and subject matter.</p><div id="clusters"></div>
+<div id="styleControls" class="controls"></div><details><summary>Full visual contract</summary><textarea id="contract" aria-label="Album visual contract JSON" rows="15"></textarea><button id="applyContract">Apply contract JSON</button></details></details>
+<section id="gallery" class="gallery" aria-label="Photographs"></section>
+<section id="editor" hidden>
+<div class="editorTitle"><div><span class="eyebrow">EDITING REVIEW</span><h2 id="filename"></h2></div><button id="close">Back to gallery</button></div>
+<div class="viewToolbar"><label>View <select id="view"><option value="both">Side by side</option><option value="original">Original</option><option value="edited">Edited</option></select></label><label>Zoom <input id="zoom" type="range" min="1" max="4" step=".1" value="1"></label><span>Drag to pan · scroll inside either image</span></div>
+<div id="comparison"><figure id="originalFigure"><figcaption>ORIGINAL · never modified</figcaption><div class="viewport"><div class="imageStage"><img id="original" alt="Original photograph"><div id="cropBox"></div></div></div></figure><figure id="editedFigure"><figcaption>EDITED · saved output</figcaption><div class="viewport"><div class="imageStage"><img id="edited" alt="Edited photograph"></div></div></figure></div>
+<div class="panels"><section><h3>Crop & print</h3><p id="metrics"></p><div id="cropControls" class="controls"></div><label>Aspect ratio <select id="aspect"><option>original</option><option>3:2</option><option>2:3</option><option>4:3</option><option>3:4</option><option>4:5</option><option>5:4</option><option>1:1</option><option>16:9</option><option>9:16</option></select></label><button id="disableCrop">Disable crop</button><p id="printability"></p></section>
+<section><h3>Color adjustments</h3><div id="colorControls" class="controls"></div></section>
+<section><h3>Editing summary</h3><p id="summary"></p><p id="confidence"></p><details><summary>Reviewer & revision history</summary><pre id="review"></pre></details></section></div>
+<section class="variantPanel"><h3>Per-photo options</h3><p>The reviewer compared these safe crop and grade combinations against the photo and album mood. Its choice is marked; all options are full-resolution JPEGs in this photo’s folder under <code>options/</code>. Choose another to override it.</p><p id="variantWarnings" class="warning"></p><div id="variantGrid" class="variantGrid"></div></section>
+<div class="savebar"><p>Manual edits are preserved on future automatic runs. Save renders and reviews your changes.</p><button id="reset">Reset to AI version</button><button id="save" class="primary">Save manual edit</button></div>
+</section>
+<footer><span>input/ → output/ · reports/ · cache/</span><a id="performance" href="/media/reports/performance.json" target="_blank" rel="noopener" hidden>Open performance profile ↗</a><a id="report" href="/media/reports/gallery_report.html" target="_blank" rel="noopener" hidden>Open gallery report ↗</a></footer>
+</main><script src="/static/app.js"></script>
+</body></html>

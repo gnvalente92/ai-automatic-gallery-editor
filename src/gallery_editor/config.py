@@ -24,6 +24,7 @@ class Settings(Schema):
     text_model: str = ""
     review_model: str = ""
     model_timeout: float = Field(default=180, gt=0, le=3600)
+    option_review_timeout: float = Field(default=300, gt=0, le=3600)
     model_max_tokens: int = Field(default=8192, ge=512, le=32768)
     model_context_tokens: int = Field(default=32768, ge=8192, le=131072)
     analysis_workers: int = Field(default=4, ge=1, le=16)

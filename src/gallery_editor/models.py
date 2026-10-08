@@ -12,8 +12,18 @@ import httpx
 from .imaging import load_image, preview, save_image
 from .storage import digest, file_hash, read_json, write_json
 
-PROMPT_VERSION = "deep-album-prompt-v13"
-OPTION_REVIEW_PROMPT_VERSION = "option-review-v1"
+PROMPT_VERSION = "deep-album-prompt-v15"
+OPTION_REVIEW_PROMPT_VERSION = "option-review-v3"
+# The color-editor prompt is deliberately unchanged; preserve its prior response cache.
+COLOR_PROMPT_VERSION = "deep-album-prompt-v13"
+
+
+def _cache_prompt_version(role):
+    if role == "option reviewer":
+        return f"{PROMPT_VERSION}-{OPTION_REVIEW_PROMPT_VERSION}"
+    if role == "color editor":
+        return COLOR_PROMPT_VERSION
+    return PROMPT_VERSION
 
 
 class DecisionModel(Protocol):
@@ -25,12 +35,14 @@ class LocalModel:
         self.settings = settings
         self.events = []
         self.unavailable = None
+        self.consecutive_timeouts = 0
         self.event_callback = None
         self.progress_callback = None
 
     def begin_run(self):
         self.events.clear()
         self.unavailable = None
+        self.consecutive_timeouts = 0
 
     def _record(self, event):
         self.events.append(event)
@@ -80,9 +92,7 @@ class LocalModel:
         image_hashes = [file_hash(Path(p)) for p in images]
         key = digest(
             [
-                f"{PROMPT_VERSION}-{OPTION_REVIEW_PROMPT_VERSION}"
-                if role == "option reviewer"
-                else PROMPT_VERSION,
+                _cache_prompt_version(role),
                 role,
                 model,
                 self.settings.local_model_endpoint,
@@ -138,6 +148,17 @@ class LocalModel:
             "the gallery. Do not infer a crop rule or add grain from this color reference. "
             "Schema: " + json.dumps(schema.model_json_schema())
         )
+        if role in {"photo analyst", "crop editor", "reviewer", "option reviewer", "photo crop and color editor"}:
+            system += (
+                " Scene-aware composition guidance: for portraits protect expression, eyes, hands, safe body cut levels "
+                "and look room; for groups preserve relationships; for landscapes balance horizon, foreground and focal "
+                "point; for architecture preserve geometry and symmetry; for wildlife protect eyes and extremities; for "
+                "macro retain the sharp plane; for events and documentary preserve moment and context; for still life, "
+                "food and products protect meaningful objects and labels; for minimalist or abstract images respect "
+                "deliberate negative space and graphic form. Lines, layers, visual weight, light, color, framing and "
+                "perspective are composition evidence, not mandatory recipes. A crop must visibly improve story and "
+                "balance; a safe crop is not automatically good."
+            )
         if role == "option reviewer":
             system += (
                 " This role chooses among multiple rendered candidates: read the numbered contact sheet and exact "
@@ -194,7 +215,11 @@ class LocalModel:
                     ],
                 }
             with httpx.Client(
-                timeout=self.settings.model_timeout, trust_env=False, follow_redirects=False
+                timeout=(
+                    self.settings.option_review_timeout if role == "option reviewer" else self.settings.model_timeout
+                ),
+                trust_env=False,
+                follow_redirects=False,
             ) as client:
                 response = client.post(request_url, json=request)
                 response.raise_for_status()
@@ -236,6 +261,7 @@ class LocalModel:
                 )
             result = schema.model_validate_json(value)
             write_json(cache, result.model_dump())
+            self.consecutive_timeouts = 0
             record("local_model", model=model, request_seconds=request_seconds, **diagnostics)
             return result
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
@@ -248,6 +274,14 @@ class LocalModel:
                 request_seconds=round(perf_counter() - request_started, 3),
                 **diagnostics,
             )
-            if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
+            if isinstance(exc, httpx.ConnectError):
                 self.unavailable = "Local model unavailable this run: " + str(exc)[:200]
+            elif isinstance(exc, httpx.TimeoutException):
+                self.consecutive_timeouts += 1
+                if self.consecutive_timeouts >= 2:
+                    self.unavailable = (
+                        "Local model timed out on two consecutive requests; pausing further inference this run"
+                    )
+            else:
+                self.consecutive_timeouts = 0
             return None

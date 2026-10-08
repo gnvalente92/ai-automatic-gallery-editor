@@ -5,7 +5,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from gallery_editor.config import Settings
-from gallery_editor.cropping import choose_crop
+from gallery_editor.cropping import choose_crop, validate_manual
 from gallery_editor.imaging import crop_metrics, enforce_resolution, render
 from gallery_editor.schemas import AlbumContract, Analysis, Color, Crop, CropDecision, ProtectedRegion, Review
 
@@ -113,6 +113,25 @@ def test_confident_semantic_crop_is_not_overruled_by_centroid_proxy(settings):
     crop, _ = choose_crop((6000, 6000), settings, cv, Analysis(confidence=0.9), AlbumContract(), proposal)
 
     assert crop == proposal.crop
+
+
+def test_ai_custom_aspect_is_rejected_and_native_ratio_fallback_is_used(settings):
+    cv = {"protected_regions": [], "edge_centroid": [0.5, 0.5]}
+    proposal = CropDecision(
+        crop=Crop(width=0.95, height=0.9),
+        confidence=0.95,
+        rationale="custom format",
+    )
+    crop, candidates = choose_crop((640, 480), settings, cv, Analysis(confidence=0.9), AlbumContract(), proposal)
+    assert crop == Crop()
+    assert any("standard aspect ratio" in (candidate["rejection"] or "") for candidate in candidates)
+
+
+def test_manual_crop_must_use_native_or_supported_standard_ratio(settings):
+    validate_manual(Crop(x=0.05, y=0.05, width=0.9, height=0.9), (640, 480), settings, "original")
+    validate_manual(Crop(width=0.75), (640, 480), settings, "original")  # 1:1 square
+    with pytest.raises(ValueError, match="standard aspect ratio"):
+        validate_manual(Crop(width=0.95, height=0.9), (640, 480), settings, "original")
 
 
 def test_protected_subjects(settings):

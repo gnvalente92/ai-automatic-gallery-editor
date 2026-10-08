@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .cropping import contains, hard_keep_zones
+from .cropping import contains, hard_keep_zones, has_standard_aspect
 from .imaging import (
     RAWS,
     crop_box,
@@ -21,14 +21,16 @@ from .imaging import (
 from .schemas import Color, Crop
 from .storage import digest, file_hash, safe_path
 
+MAX_REVIEW_CROP_CHOICES = 10
+
 
 def _focus(cv, analysis):
-    regions = [Crop.model_validate(r) for r in cv.get("protected_regions", [])]
-    regions.extend(
-        Crop.model_validate(region.model_dump(exclude={"role", "confidence"}))
-        for region in analysis.protected_regions
-        if region.role in {"primary", "secondary"} and region.confidence >= 0.6
-    )
+    semantic = [region for region in analysis.protected_regions if region.role == "primary" and region.confidence >= 0.6]
+    if not semantic:
+        semantic = [region for region in analysis.protected_regions if region.role == "secondary" and region.confidence >= 0.6]
+    regions = [Crop.model_validate(region.model_dump(exclude={"role", "confidence"})) for region in semantic]
+    if not regions:
+        regions = [Crop.model_validate(r) for r in cv.get("protected_regions", [])]
     if not regions:
         return cv.get("edge_centroid", [0.5, 0.5])
     return [
@@ -37,47 +39,88 @@ def _focus(cv, analysis):
     ]
 
 
-def _anchored_aspect_crop(size, ratio, focus):
+def _format_crop(size, ratio, focus, placement=(0.5, 0.5)):
+    """Place a crop of the requested aspect around a semantic focus point."""
     width, height = size
-    if width / height > ratio:
-        crop_width, crop_height = height * ratio / width, 1.0
+    source_ratio = width / height
+    if source_ratio > ratio:
+        crop_width, crop_height = ratio / source_ratio, 1.0
     else:
-        crop_width, crop_height = 1.0, width / (ratio * height)
-    x = min(max(focus[0] - crop_width / 2, 0), 1 - crop_width)
-    y = min(max(focus[1] - crop_height / 2, 0), 1 - crop_height)
+        crop_width, crop_height = 1.0, source_ratio / ratio
+    x = min(max(focus[0] - placement[0] * crop_width, 0), 1 - crop_width)
+    y = min(max(focus[1] - placement[1] * crop_height, 0), 1 - crop_height)
     return Crop(x=x, y=y, width=crop_width, height=crop_height)
+
+
+def _native_crop(area_fraction, focus, placement=(0.5, 0.5)):
+    """Crop at native aspect and position the subject at a composition target."""
+    scale = area_fraction**0.5
+    x = min(max(focus[0] - placement[0] * scale, 0), 1 - scale)
+    y = min(max(focus[1] - placement[1] * scale, 0), 1 - scale)
+    return Crop(x=x, y=y, width=scale, height=scale)
+
+
+def _composition_candidates(size, focus, scene_class, gallery_role):
+    """Generate subject-aware framing hypotheses in addition to semantic proposals."""
+    context_profiles = {
+        "group", "landscape", "street_documentary", "architecture_interior", "event_wedding", "night_astro"
+    }
+    close_profiles = {"portrait", "wildlife_nature", "macro_closeup", "sports_action"}
+    context_role = gallery_role in {"establishing", "group", "context", "transition"}
+    if scene_class in context_profiles or context_role:
+        scales = (0.96, 0.90, 0.84)
+    elif scene_class in close_profiles or gallery_role in {"portrait", "detail", "hero", "emotional", "action"}:
+        scales = (0.96, 0.90, 0.84, 0.78)
+    else:
+        scales = (0.96, 0.90, 0.84, 0.78)
+    candidates = [
+        (f"native-{int(area * 100)}", f"Native ratio · {int((1 - area) * 100)}% area removed", _native_crop(area, focus))
+        for area in scales
+    ]
+    if scene_class not in context_profiles and not context_role:
+        for anchor, label in ((1 / 3, "left third"), (2 / 3, "right third")):
+            candidates.append(
+                (f"native-{label.replace(' ', '-')}", f"Native ratio · subject on {label}", _native_crop(0.84, focus, (anchor, 0.5)))
+            )
+    placements = ((0.5, "high"), (0.5, "low"))
+    if scene_class not in context_profiles and not context_role:
+        placements = ((1 / 3, "left-weighted"), (2 / 3, "right-weighted"), *placements)
+    for anchor, label in placements:
+        placement = (anchor, 0.5) if "weighted" in label else (0.5, anchor)
+        candidates.append(
+            (f"native-{label}", f"Native ratio · {label} balance", _native_crop(0.90, focus, placement))
+        )
+    width, height = size
+    formats = (("wide", "16:9", 16 / 9), ("portrait", "4:5", 4 / 5)) if width >= height else (
+        ("portrait", "4:5", 4 / 5), ("landscape", "3:2", 3 / 2)
+    )
+    for key, label, ratio in formats:
+        candidates.append((key, f"{label} · subject aware", _format_crop(size, ratio, focus)))
+        candidates.append(
+            (f"{key}-thirds", f"{label} · subject on third", _format_crop(size, ratio, focus, (1 / 3, 0.5)))
+        )
+    return candidates
 
 
 def crop_options(size, cv, analysis, settings, recommended, semantic_options=()):
     """Return safe composition choices plus reasons an orientation was withheld."""
     focus = _focus(cv, analysis)
-    width, height = size
-    orientation_options = (
-        [("landscape", "Landscape · 16:9", 16 / 9), ("portrait", "Portrait · 4:5", 4 / 5)]
-        if width >= height
-        else [("portrait", "Portrait · 4:5", 4 / 5), ("landscape", "Landscape · 3:2", 3 / 2)]
-    )
     choices = [
         ("original", "Original framing", Crop()),
         ("recommended", "Recommended framing", recommended),
-        (
-            "tighter",
-            "Tighter framing",
-            _tight_crop(focus),
-        ),
     ]
+    choices.extend(_composition_candidates(size, focus, analysis.scene_class, analysis.gallery_role))
     choices.extend(
-        (key, label, _anchored_aspect_crop(size, ratio, focus)) for key, label, ratio in orientation_options
-    )
-    choices.extend(
-        (f"semantic-{index + 1}", option.rationale, option.crop)
+        (f"semantic-{index + 1}", option.rationale, option.crop, option.rationale)
         for index, option in enumerate(semantic_options)
     )
     if analysis.confidence < 0.65:
         choices = [("original", "Original framing · low scene confidence", Crop())]
     protected = hard_keep_zones(cv.get("protected_regions", []), analysis.protected_regions)
     accepted, rejected, seen = [], [], set()
-    for key, label, crop in choices:
+    for choice in choices:
+        key, label, crop = choice[:3]
+        rationale = choice[3] if len(choice) > 3 else label
         try:
             metrics = crop_metrics(crop, size)
         except ValueError as exc:
@@ -89,8 +132,12 @@ def crop_options(size, cv, analysis, settings, recommended, semantic_options=())
         seen.add(pixel_box)
         try:
             enforce_resolution(crop, size, settings)
+            if not has_standard_aspect(crop, size):
+                raise ValueError("Would create a non-standard aspect ratio")
             if any(not contains(crop, region) for region in protected):
                 raise ValueError("Would cut a detected face or protected subject region")
+            if metrics["crop_percentage"] > 30:
+                raise ValueError("Would remove more than 30% of image area")
         except ValueError as exc:
             rejected.append({"id": key, "label": label, "reason": str(exc), "crop": crop.model_dump()})
             continue
@@ -103,17 +150,27 @@ def crop_options(size, cv, analysis, settings, recommended, semantic_options=())
                 "label": label,
                 "crop": crop,
                 "metrics": metrics,
+                "rationale": rationale,
                 "notes": notes,
             }
         )
+    if len(accepted) > MAX_REVIEW_CROP_CHOICES:
+        def priority(option):
+            identifier = option["id"]
+            if identifier == "original":
+                return (0, identifier)
+            if identifier == "recommended":
+                return (1, identifier)
+            if identifier.startswith("semantic-"):
+                return (2, identifier)
+            if identifier in {"wide", "portrait", "landscape"}:
+                return (3, identifier)
+            if identifier.startswith("native-"):
+                return (4, identifier)
+            return (5, identifier)
+
+        accepted = sorted(accepted, key=priority)[:MAX_REVIEW_CROP_CHOICES]
     return accepted, rejected
-
-
-def _tight_crop(focus, retention=0.92):
-    width = height = retention
-    x = min(max(focus[0] - width / 2, 0), 1 - width)
-    y = min(max(focus[1] - height / 2, 0), 1 - height)
-    return Crop(x=x, y=y, width=width, height=height)
 
 
 def color_options(base):
@@ -299,6 +356,7 @@ def generate_variants(
                     "crop": crop_choice["crop"].model_dump(),
                     "color": color.model_dump(),
                     "crop_metrics": crop_choice["metrics"],
+                    "crop_rationale": crop_choice.get("rationale", crop_choice["label"]),
                     "preview": relative,
                     "notes": crop_choice["notes"],
                     "full_resolution_exported": False,

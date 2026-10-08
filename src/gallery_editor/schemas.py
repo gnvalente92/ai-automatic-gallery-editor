@@ -132,6 +132,27 @@ class GalleryReview(Schema):
 
 
 class Analysis(Schema):
+    scene_class: Literal[
+        "portrait",
+        "group",
+        "landscape",
+        "street_documentary",
+        "architecture_interior",
+        "wildlife_nature",
+        "macro_closeup",
+        "still_life_product_food",
+        "event_wedding",
+        "sports_action",
+        "night_astro",
+        "minimalist_abstract",
+        "document_screenshot",
+        "selfie",
+        "other",
+        "unknown",
+    ] = "unknown"
+    gallery_role: Literal[
+        "hero", "establishing", "action", "portrait", "detail", "group", "emotional", "context", "transition", "supporting", "unknown"
+    ] = "unknown"
     subjects: list[str] = Field(default_factory=list, max_length=30)
     expressions: list[str] = Field(default_factory=list, max_length=30)
     composition: str = "Unknown"

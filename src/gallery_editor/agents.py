@@ -14,6 +14,27 @@ from .schemas import (
 )
 from .vision import outliers
 
+COMPOSITION_GUIDE = (
+    "COMPOSITION PRINCIPLES: Name the photograph's subject and story before changing framing. Simplify only when an "
+    "element competes without purpose; empty space, foreground framing, layers and environmental context may be "
+    "intentional. Assess visual weight (size, brightness, sharpness, saturation, warmth, faces and text), balance, "
+    "leading/implied lines, diagonals, curves, symmetry, patterns, foreground/middle/background depth, figure-ground "
+    "separation, light as a focal cue, color relationships, perspective and orientation. Thirds and phi are soft "
+    "placement hypotheses; the rule of thirds is only one option. Do not force thirds. Centered, diagonal, radial, asymmetrical or tense compositions may be stronger. Keep a "
+    "horizon deliberate, preserve gaze/movement room, and inspect all four edges for tangents and partial intrusions. "
+    "Foreground elements can frame a scene and create depth; compare crops that retain them with crops that remove "
+    "them. Do not label an element a distraction based on position alone. Genre profile: portraits prioritize eyes, "
+    "expression, safe crop levels, hands, headroom and look room; groups preserve all relationships; landscapes "
+    "balance horizon, foreground anchor and focal point; street/documentary and events preserve decisive moments and "
+    "story context; architecture protects geometry, symmetry and verticals; wildlife protects eyes, extremities and "
+    "habitat; macro keeps the sharp focal plane; still life/product/food protects the complete meaningful object and "
+    "labels; sports/action preserves face, ball/equipment, body action and lead room; night/astro preserves the "
+    "foreground-sky relationship; minimal/abstract work may depend on negative space or deliberate graphic cropping. "
+    "Use only standard output formats: original/native ratio, 3:2, 2:3, 4:3, 3:4, 4:5, 5:4, 1:1, 16:9, or 9:16. "
+    "Never invent or recommend a custom/free-form aspect ratio. These are defaults, not automatic rules. Alter aspect ratio only when requested or clearly beneficial. A crop must "
+    "make a visible, photograph-specific improvement; a technically safe crop is not automatically a good crop."
+)
+
 CROP_COMPOSITION_RULE = (
     "Do no harm. Cropping is semantic composition, never face-centering, empty-space removal, or grid fitting. Work in "
     "the already EXIF-oriented display coordinates and reason only from the provided image, analysis, album/cluster "
@@ -36,9 +57,11 @@ CROP_COMPOSITION_RULE = (
     "intentional framing that adds depth or atmosphere: compare keeping a meaningful portion with removing it; do "
     "not automatically label it a distraction. Remove it only when evidence shows it is irrelevant and the story, "
     "relationships, and balance improve. Prefer clean crop edges without tangents or awkward slivers.\n"
-    "CANDIDATES: compare the unchanged full frame, mild and moderate crops, plausible positions, and only relevant "
-    "aspect alternatives. Default to the original aspect ratio; change it only when requested or clearly superior and "
-    "safe. Consider the image's scene profile: groups/context stay wide; portraits retain a deliberate safe crop level "
+    "CANDIDATES: classify the scene genre and gallery role first. Compare the unchanged full frame against distinct "
+    "framing hypotheses: a conservative native-ratio refinement, a story-led placement that improves hierarchy/edge "
+    "balance, and a genre-appropriate aspect alternative only when it helps and stays safe. Do not return near-duplicate "
+    "alternatives. Use only original/native or standard aspect ratios (3:2, 2:3, 4:3, 3:4, 4:5, 5:4, 1:1, 16:9, 9:16); never propose a custom/free-form format. For each one, state what the frame includes/excludes and the visual reason. Default to the original "
+    "aspect ratio; change it only when requested or clearly superior and safe. Consider the image's scene profile: groups/context stay wide; portraits retain a deliberate safe crop level "
     "and headroom; action keeps the ball/equipment and lead room; landscape respects horizon/foreground; architecture "
     "respects symmetry/verticals; documents should follow their boundaries rather than artistic grids. Do not force "
     "variation across a sequence. Prefer the least aggressive crop that materially improves the photograph. No crop "
@@ -49,7 +72,7 @@ CROP_COMPOSITION_RULE = (
     "including the original; include portrait/landscape alternatives only when they preserve the story and resolution. "
     "Consider album/cluster consistency without making photographs identical. Matching user-provided references may "
     "inform framing preference only for their paired source; never copy their pixels or force an unsafe match. A crop "
-    "needs a reason tied to this photograph; otherwise keep the original."
+    "needs a reason tied to this photograph; otherwise keep the original.\n" + COMPOSITION_GUIDE
 )
 
 
@@ -86,7 +109,9 @@ def reference_guidance(references):
 
 def photo_agent(model, photo, root, cv, album_context=None):
     analysis_instructions = (
-        "Describe the photographed scene and identify meaningful subjects, context, distractions, composition and "
+        "Classify scene_class using the allowed schema genres and gallery_role (hero, establishing, action, portrait, "
+        "detail, group, emotional, context, transition, supporting, or unknown). Then describe the photographed scene "
+        "and identify meaningful subjects, context, distractions, composition and "
         "uncertainty. For each protected_regions box, assign its role as primary, secondary, contextual, or distraction "
         "and a confidence. Use tight normalized boxes only for primary/secondary subjects a crop must preserve "
         "(especially heads/faces); never make broad background, negative space, foreground framing, or every "
@@ -194,12 +219,7 @@ def photo_edit_agent(
             "capture_metadata": photo.get("capture_metadata", {}),
             "dimensions": [photo["width"], photo["height"]],
             "resolution": settings.model_dump(mode="json", exclude={"root", "input_dir", "output_dir"}),
-            "crop_rule": "Compare the original framing with deliberate crop candidates. Use the rule of thirds as "
-            "one useful option: consider placing a key subject near a gridline/intersection, while preserving gaze or "
-            "movement space, leading lines, balance, and useful context. Do not force thirds or crop unless it clearly "
-            "improves the image. Keep breathing room; never cut a face, ball, hand, foot, or limb awkwardly at a joint. "
-            "Preserve protected regions and pixel floors. When user_composition_reference is present, apply its "
-            "subject-placement and ambient-light guidance only to this matching source photo.",
+            "crop_rule": CROP_COMPOSITION_RULE,
             "color_rule": "Use cluster statistics and the album contract for restrained relative corrections. "
             "Public editing descriptions from Curtis Padley support a flexible range from subtle/natural to "
             "moodier/cinematic, using color depth, shaped light, selective shadow depth and refined color. Treat "
@@ -261,7 +281,16 @@ def reviewer_agent(
     model, original, edited, neighbors, context, before, after, gallery, analysis, references=()
 ):
     # A fresh independent request: no editor conversation/history is supplied.
-    result = model.decide("reviewer", Review, context, [original, edited, *neighbors, *references])
+    review_context = {
+        **context,
+        "composition_guide": COMPOSITION_GUIDE,
+        "review_instruction": (
+            "Compare the original and edited frame for story, hierarchy, balance, subject/interaction preservation, "
+            "genre-appropriate framing, lead room, edges and context. A crop may be safe yet compositionally weak. "
+            "Do not approve merely because it preserves resolution; do not demand a crop when the original is stronger."
+        ),
+    }
+    result = model.decide("reviewer", Review, review_context, [original, edited, *neighbors, *references])
     issues = []
     if after["highlights"] > before["highlights"] + 0.025:
         issues.append("Edit introduced highlight clipping")
@@ -300,8 +329,12 @@ def option_reviewer(model, photo, root, options, sheet, contract, album_context,
             "visual language. Judge the photo's mood and story together with the global mood, its scene cluster, "
             "cluster color tendencies and related images. Consistent means a shared visual language, not identical "
             "settings: preserve legitimate lighting and framing differences. Respect photographer intent, context, "
-            "subject relationships, negative space, lead room and the supplied crop-safety metrics. Prefer the less "
-            "aggressive candidate when alternatives are nearly equal. Capture metadata is factual context for "
+            "subject relationships, negative space, lead room and the supplied crop-safety metrics. Only choose a "
+            "listed crop using the native image ratio or a standard preset (3:2, 2:3, 4:3, 3:4, 4:5, 5:4, 1:1, "
+            "16:9 or 9:16); custom formats are never allowed. Compare the full "
+            "range of framing choices for real compositional benefit; do not default to the original simply because it "
+            "is safest, and do not choose a crop simply because it is tighter. Prefer the less aggressive candidate "
+            "when the visual result is otherwise equally strong. Capture metadata is factual context for "
             "interpreting lens depth/motion and capture conditions, never a camera-look preset; pixels and scene "
             "intent decide the grade. Select only an exact listed option ID; do not invent new crop/color values.",
             "photo_id": photo["id"],
@@ -309,6 +342,7 @@ def option_reviewer(model, photo, root, options, sheet, contract, album_context,
             "capture_metadata": photo.get("capture_metadata", {}),
             "global_album_contract": contract.model_dump(),
             "photo_cluster_context": album_context,
+            "composition_guide": COMPOSITION_GUIDE,
             "candidate_options": [
                 {
                     "id": option["id"],
@@ -316,11 +350,14 @@ def option_reviewer(model, photo, root, options, sheet, contract, album_context,
                     "crop": option["crop"],
                     "color": option["color"],
                     "crop_metrics": option["crop_metrics"],
+                    "crop_rationale": option.get("crop_rationale", ""),
                 }
                 for option in options
             ],
         },
-        [root / "cache" / photo["preview"], sheet, *related],
+        # The source framing is already present in the labeled contact sheet; do not
+        # send it twice. Related album frames remain useful for consistency review.
+        [sheet, *related],
     )
 
 

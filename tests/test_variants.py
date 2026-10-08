@@ -17,10 +17,11 @@ def test_landscape_variant_set_includes_safe_portrait_and_landscape():
     cv = {"protected_regions": [face.model_dump()], "edge_centroid": [0.5, 0.4]}
     crops, rejected = crop_options((6032, 4032), cv, Analysis(confidence=0.9), settings, Crop())
     kinds = {crop["id"] for crop in crops}
-    # The full-frame recommendation duplicates the always-present original option.
-    assert {"portrait", "landscape", "tighter", "original"} <= kinds
-    assert not rejected
+    # Native-aspect variants give the reviewer useful framing choices without forcing a crop.
+    assert {"original", "native-96", "native-90", "native-84", "wide"} <= kinds
+    assert any(item["id"] == "portrait" and "30%" in item["reason"] for item in rejected)
     assert all(crop["metrics"]["result_width"] >= 0 for crop in crops)
+    assert all(crop["metrics"]["crop_percentage"] <= 30 for crop in crops)
     assert all(
         max(crop["metrics"]["result_width"], crop["metrics"]["result_height"]) >= 4000 for crop in crops
     )
@@ -34,6 +35,23 @@ def test_landscape_variant_may_be_withheld_to_preserve_large_subject():
     assert "portrait" in {crop["id"] for crop in crops}
     landscape = next(crop for crop in rejected if crop["id"] == "landscape")
     assert "protected subject" in landscape["reason"]
+
+
+def test_scene_profiles_shape_native_crop_candidates():
+    settings = Settings(resolution_profile="custom", min_long_edge=4000)
+    cv = {"protected_regions": [], "edge_centroid": [0.5, 0.5]}
+    portrait, _ = crop_options(
+        (6000, 4000), cv, Analysis(scene_class="portrait", gallery_role="portrait", confidence=0.9), settings, Crop()
+    )
+    group, _ = crop_options(
+        (6000, 4000), cv, Analysis(scene_class="group", gallery_role="group", confidence=0.9), settings, Crop()
+    )
+    portrait_ids = {item["id"] for item in portrait}
+    group_ids = {item["id"] for item in group}
+    assert "native-left-third" in portrait_ids
+    assert "native-right-third" in portrait_ids
+    assert "native-left-third" not in group_ids
+    assert all(item["metrics"]["crop_percentage"] <= 30 for item in portrait + group)
 
 
 def test_color_alternatives_are_bounded_and_distinct():
@@ -91,9 +109,11 @@ def test_variant_previews_pair_crop_and_color_and_keep_pixel_metrics(tmp_path):
         Crop(),
         Color(),
     )
-    assert not rejected
-    assert len(variants) == 12
-    assert {item["crop_kind"] for item in variants} == {"original", "tighter", "portrait", "landscape"}
+    assert any("30%" in item["reason"] for item in rejected)
+    assert len(variants) > 12
+    assert len(variants) <= 30
+    assert {"original", "native-96", "native-90", "native-84"} <= {item["crop_kind"] for item in variants}
+    assert all(item["crop_metrics"]["crop_percentage"] <= 30 for item in variants)
     assert {item["color_kind"] for item in variants} == {"album", "soft", "crisp"}
     for variant in variants:
         path = tmp_path / "cache" / variant["preview"]
@@ -151,7 +171,7 @@ def test_semantic_alternative_is_exportable_and_still_checks_protection(settings
     from gallery_editor.schemas import CropAlternative
 
     option = CropAlternative(
-        crop=Crop(x=0.01, width=0.99),
+        crop=Crop(x=0.01, y=0.005, width=0.99, height=0.99),
         confidence=0.8,
         rationale="Retain foreground depth while trimming one edge",
     )
@@ -173,3 +193,31 @@ def test_semantic_alternative_is_exportable_and_still_checks_protection(settings
         [option],
     )
     assert any(c["id"] == "semantic-1" and "protected" in c["reason"] for c in rejected)
+
+
+def test_nonstandard_semantic_crop_is_not_exported(settings):
+    from gallery_editor.schemas import CropAlternative
+
+    option = CropAlternative(
+        crop=Crop(width=0.95, height=0.9),
+        confidence=0.95,
+        rationale="custom ratio should be refused",
+    )
+    crops, rejected = crop_options(
+        (6000, 4000),
+        {"protected_regions": [], "edge_centroid": [0.5, 0.5]},
+        Analysis(confidence=0.9),
+        settings,
+        Crop(),
+        [option],
+    )
+    assert not any(crop["id"] == "semantic-1" for crop in crops)
+    assert any(crop["id"] == "semantic-1" and "non-standard" in crop["reason"] for crop in rejected)
+    supported = (1.5, 2 / 3, 4 / 3, 3 / 4, 4 / 5, 5 / 4, 1, 16 / 9, 9 / 16)
+    assert all(
+        any(
+            abs(crop["metrics"]["result_width"] / crop["metrics"]["result_height"] - ratio) <= 0.003
+            for ratio in supported
+        )
+        for crop in crops
+    )

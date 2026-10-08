@@ -20,7 +20,7 @@ from .agents import (
     soften,
 )
 from .album import AlbumAnalyzer, chunks, effective_contract
-from .cropping import choose_crop, contains, hard_keep_zones, validate_manual
+from .cropping import choose_crop, contains, hard_keep_zones, has_standard_aspect, validate_manual
 from .imaging import RAWS, crop_only, enforce_resolution, load_cached_source, preview, render, save_image
 from .models import PROMPT_VERSION, LocalModel
 from .performance import PerformanceProfile
@@ -660,13 +660,15 @@ class Pipeline:
             try:
                 m = enforce_resolution(crop, size, self.settings)
                 protected = hard_keep_zones(cv["protected_regions"], analysis.protected_regions)
+                if not has_standard_aspect(crop, size):
+                    raise ValueError("Final review crop uses a non-standard aspect ratio")
                 if m["crop_percentage"] > 30 or any(not contains(crop, r) for r in protected):
                     raise ValueError("Unsafe final review crop")
                 if analysis.confidence < 0.65 and crop != Crop():
                     raise ValueError("Semantic confidence too low")
             except ValueError:
-                crop = Crop(**existing["crop"])
-                crop_rationale = "Final reviewer crop rejected; retained the last validated framing"
+                crop = Crop()
+                crop_rationale = "Final reviewer crop rejected; retained the original framing"
             else:
                 if crop != Crop(**existing["crop"]):
                     crop_rationale = (
@@ -717,6 +719,20 @@ class Pipeline:
                 ),
                 None,
             )
+            if selected:
+                try:
+                    selected_metrics = enforce_resolution(Crop.model_validate(selected["crop"]), size, self.settings)
+                    selected_crop = Crop.model_validate(selected["crop"])
+                    if not has_standard_aspect(selected_crop, size):
+                        raise ValueError("Reviewer option uses a non-standard aspect ratio")
+                    option_protected = hard_keep_zones(cv["protected_regions"], analysis.protected_regions)
+                    if selected_metrics["crop_percentage"] > 30 or any(
+                        not contains(selected_crop, region) for region in option_protected
+                    ):
+                        raise ValueError("Reviewer option exceeds crop-area or protected-subject constraints")
+                except ValueError:
+                    # Never trust reviewer IDs or cached option data to bypass final crop validation.
+                    selected = None
             if selected:
                 crop = Crop.model_validate(selected["crop"])
                 color = Color.model_validate(selected["color"])
@@ -815,6 +831,8 @@ class Pipeline:
             new_crop = suggested.crop or crop
             try:
                 m = enforce_resolution(new_crop, size, self.settings)
+                if not has_standard_aspect(new_crop, size):
+                    raise ValueError("Reviewer suggested a non-standard aspect ratio")
                 if m["crop_percentage"] > 30 or any(not contains(new_crop, r) for r in protected):
                     raise ValueError("Reviewer suggested an unsafe crop")
                 if analysis.confidence < 0.65 and new_crop != Crop():
@@ -857,6 +875,8 @@ class Pipeline:
             raise ValueError(
                 "Output file is not the previous generated export; move it aside before processing"
             )
+        if not has_standard_aspect(crop, original.size):
+            raise ValueError("Refusing to export a crop with a non-standard aspect ratio")
         enforce_resolution(crop, original.size, self.settings)  # final export boundary
         with self.measure("export encode and write"):
             save_image(edited, dest, quality=100)

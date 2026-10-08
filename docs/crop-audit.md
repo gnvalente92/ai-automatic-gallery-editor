@@ -24,6 +24,14 @@ Assessment: 3/5 for the experimental project. The deterministic workflow is test
 | Medium | Performance/album analysis files were only latest-run views. | Full runs archive performance, album analysis and final review alongside per-run gallery/photo reports. |
 | Medium | Deliberate monochrome could be flagged for lacking gallery saturation or warmth. | Numerical saturation/temperature outlier checks do not treat intentional monochrome as a color mismatch. Visual review still applies. |
 
+## Composition overhaul — 2026-10-08
+
+The crop path had generic centered format crops and one fixed tighter crop. The existing VLM already understood subjects and context, but it did not receive a consistent genre label, and the option reviewer was not told to compare framing alternatives for actual compositional improvement. The latest archived run also shows the option reviewer timed out after 180 seconds; it never selected an option, and that single timeout disabled every later reviewer call. Added validated scene-class and gallery-role fields, a distilled genre-aware composition guide shared with analysis, crop planning and both reviewers, and native-aspect scale/placement candidates anchored on the semantic subject focus. Context-heavy genres keep more context and avoid third-placement candidates by default; portraits, details and action can consider closer or off-center framing. Multiple distinct hypotheses accompany format alternatives and semantic suggestions.
+
+Applied options now reject crops above the existing 30% area-removal cap in addition to protected-subject and resolution checks. Reviewer-selected options are validated again before rendering so a stale or malformed selection cannot bypass those limits. The reviewer receives each option's crop rationale, and its prompt no longer defaults automatically to the unchanged frame or the tightest frame. The list is capped at ten distinct framing choices (up to 30 grade/crop combinations) so it stays reviewable. The original is represented in the contact sheet and is no longer sent again as a duplicate model image. Option review defaults to a 300-second request timeout; one request timeout does not disable later roles, while two consecutive timeouts do. Prompt cache versions were bumped for composition roles so prior scene classifications and reviewer choices are not silently reused; the unchanged color-editor response cache remains reusable.
+
+This reuses the existing analyst, crop editor, option reviewer, standard reviewer, renderer and variant exporter; no additional agent was added. The change improves candidate coverage and prompt context, but does not provide pose/keypoint, segmentation, horizon, OCR or learned-aesthetic models. Candidate quality still needs evaluation on real galleries; the expert acceptance target remains unmeasured.
+
 Per-image monochrome, warm monochrome and restrained cinematic choices remain available to the color agent. Natural alternatives are retained. Foreground framing guidance is generic: it can justify retaining a substantial foreground element for depth or story, without mentioning a specific photograph or always preserving obstructions.
 
 ## Verification
@@ -34,7 +42,7 @@ Two later complete runs used the supplied RAFs in a fresh isolated workspace, wi
 
 Before decode sharing, the isolated fresh run took 40.011 seconds. After it, a fresh run took 27.283 seconds and a repeat run took 9.516 seconds. This is a two-photo deterministic rendering measurement, not a VLM benchmark. Lossless caches consume additional disk space.
 
-Regression coverage includes actual rendered color versus metadata, independent revisions, bounded revision loops, full-size RAW choices, protected large subjects, failed analysis recovery, semantic alternatives, source-format collisions, malformed responses, all eight EXIF orientations, resolution floors and CLI failure status. See `verification.md` for the final suite result and retained evidence paths.
+Regression coverage includes actual rendered color versus metadata, independent revisions, bounded revision loops, full-size RAW choices, protected large subjects, genre-aware crop alternatives, 30% crop-area rejection, reviewer recovery after a timeout, failed analysis recovery, semantic alternatives, source-format collisions, malformed responses, all eight EXIF orientations, resolution floors and CLI failure status. Native and named standard aspect ratios are now the only allowed crop formats; proposals, variants, review selections and manual edits reject all other ratios. The suite passes 127 tests, Ruff and compileall. These checks validate mechanics, not human crop preference. See `verification.md` for prior real-source evidence and its limits.
 
 ## Remaining limits
 

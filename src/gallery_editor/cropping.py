@@ -3,6 +3,17 @@ import math
 from .imaging import crop_box, crop_metrics, enforce_resolution
 from .schemas import Crop
 
+STANDARD_ASPECTS = ("3:2", "2:3", "4:3", "3:4", "4:5", "5:4", "1:1", "16:9", "9:16")
+
+
+def has_standard_aspect(crop, size, tolerance=0.003):
+    """Allow the camera's native ratio or one of the product's named presets."""
+    width, height = size
+    ratio = crop.width * width / (crop.height * height)
+    source_ratio = width / height
+    expected = [source_ratio, *(int(a) / int(b) for a, b in (item.split(":") for item in STANDARD_ASPECTS))]
+    return any(abs(ratio - value) <= tolerance for value in expected)
+
 
 def aspect_crop(crop, size, ratio):
     if ratio == "original":
@@ -67,6 +78,8 @@ def choose_crop(size, settings, cv, analysis, contract, proposal=None):
             continue
         try:
             metrics = enforce_resolution(crop, size, settings)
+            if not has_standard_aspect(crop, size):
+                raise ValueError("Crop must use the original ratio or a supported standard aspect ratio")
             if metrics["crop_percentage"] > 30:
                 raise ValueError("Automatic crop removes more than 30% of original area")
             if any(not contains(crop, region) for region in protected):
@@ -122,6 +135,8 @@ def choose_crop(size, settings, cv, analysis, contract, proposal=None):
 
 def validate_manual(crop, size, settings, aspect):
     metrics = enforce_resolution(crop, size, settings)
+    if not has_standard_aspect(crop, size):
+        raise ValueError("Crop must use the original ratio or a supported standard aspect ratio")
     if aspect != "original":
         a, b = map(int, aspect.split(":"))
         _, _, _, _ = crop_box(crop, size)

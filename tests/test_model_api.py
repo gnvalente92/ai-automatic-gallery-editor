@@ -11,7 +11,52 @@ from PIL import Image
 
 from gallery_editor.app import create_app
 from gallery_editor.models import LocalModel
-from gallery_editor.schemas import Analysis, Crop
+from gallery_editor.schemas import Analysis, Crop, OptionSelection
+
+
+def test_composition_prompt_bump_preserves_unchanged_color_agent_cache():
+    from gallery_editor.models import PROMPT_VERSION, _cache_prompt_version
+
+    assert PROMPT_VERSION == "deep-album-prompt-v15"
+    assert _cache_prompt_version("color editor") == "deep-album-prompt-v13"
+    assert _cache_prompt_version("photo analyst") == PROMPT_VERSION
+    assert _cache_prompt_version("option reviewer").endswith("option-review-v3")
+
+
+def test_option_review_timeout_does_not_disable_the_next_reviewer_request(settings, monkeypatch):
+    settings.vision_model = "test-only"
+    settings.review_model = "test-only"
+    assert settings.option_review_timeout == 300
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("option comparison exceeded its request window", request=request)
+        payload = {
+            "message": {
+                "content": json.dumps(
+                    {"selected_option_id": "original", "confidence": 0.8, "rationale": "Best composition"}
+                )
+            },
+            "done_reason": "stop",
+        }
+        return httpx.Response(200, json=payload)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+    )
+    adapter = LocalModel(settings)
+
+    assert adapter.decide("option reviewer", OptionSelection, {}) is None
+    assert adapter.unavailable is None
+    result = adapter.decide("reviewer", OptionSelection, {})
+
+    assert result.selected_option_id == "original"
+    assert calls == 2
+    assert [event["status"] for event in adapter.events] == ["fallback", "local_model"]
 
 
 @pytest.mark.parametrize(
